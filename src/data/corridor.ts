@@ -245,25 +245,33 @@ export function avgP95Speed(period: Period): number {
 }
 
 /** Largest site-level drop in 95th percentile (before → after), km/h. */
-export function maxP95Drop(): { site: string; before: number; after: number; drop: number } {
-  let best = {
-    site: SPEED.sites[0],
-    before: SPEED.p95.before[0],
-    after: SPEED.p95.after[0],
-    drop: SPEED.p95.before[0] - SPEED.p95.after[0],
-  };
+export function maxP95Drop(): {
+  site: string;
+  before: number;
+  after: number;
+  drop: number;
+} {
+  let bestSite = SPEED.sites[0] as string;
+  let bestBefore = SPEED.p95.before[0] as number;
+  let bestAfter = SPEED.p95.after[0] as number;
+  let bestDrop = bestBefore - bestAfter;
   for (let i = 1; i < SPEED.sites.length; i++) {
-    const drop = SPEED.p95.before[i] - SPEED.p95.after[i];
-    if (drop > best.drop) {
-      best = {
-        site: SPEED.sites[i],
-        before: SPEED.p95.before[i],
-        after: SPEED.p95.after[i],
-        drop,
-      };
+    const before = SPEED.p95.before[i] as number;
+    const after = SPEED.p95.after[i] as number;
+    const drop = before - after;
+    if (drop > bestDrop) {
+      bestSite = SPEED.sites[i];
+      bestBefore = before;
+      bestAfter = after;
+      bestDrop = drop;
     }
   }
-  return best;
+  return {
+    site: bestSite,
+    before: bestBefore,
+    after: bestAfter,
+    drop: bestDrop,
+  };
 }
 
 /** Daily cyclists at four count sites (both directions). */
