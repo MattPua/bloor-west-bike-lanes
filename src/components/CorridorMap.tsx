@@ -7,37 +7,101 @@ import {
   type Period,
   pointsForPeriod,
 } from "../data/corridor";
+import { bikeCounterGeoJson } from "../data/bike-counter";
+import bikeways from "../data/toronto-bikeways.json";
 
 type Props = {
   period: Period;
 };
 
-const BOUNDS: [[number, number], [number, number]] = [
-  [-79.575, 43.632],
-  [-79.465, 43.658],
-];
+function corridorBounds(): [[number, number], [number, number]] {
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+  for (const [lon, lat] of CORRIDOR_LINE.geometry.coordinates) {
+    minLon = Math.min(minLon, lon);
+    maxLon = Math.max(maxLon, lon);
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+  }
+  // Small lat pad so the thin E–W corridor isn’t a razor line.
+  const latPad = (maxLat - minLat) * 2.2 + 0.008;
+  return [
+    [minLon - 0.004, minLat - latPad],
+    [maxLon + 0.004, maxLat + latPad],
+  ];
+}
+
+const CORRIDOR_BOUNDS = corridorBounds();
+
+function fitPadding(): maplibregl.PaddingOptions {
+  const mobile = typeof window !== "undefined" && window.innerWidth <= 780;
+  return mobile
+    ? { top: 210, bottom: 280, left: 20, right: 20 }
+    : { top: 170, bottom: 230, left: 56, right: 56 };
+}
+
+function fitToCorridor(map: maplibregl.Map, animate: boolean) {
+  map.fitBounds(CORRIDOR_BOUNDS, {
+    padding: fitPadding(),
+    duration: animate ? 1100 : 0,
+    maxZoom: 13.6,
+    essential: true,
+  });
+}
 
 function ksiGeoJson(period: Period): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: pointsForPeriod(period).map((p, i) => ({
-      type: "Feature",
-      id: i,
-      properties: {
-        fatal: p.fatal,
-        cyclistHurt: p.cyclistHurt,
-        year: p.year,
-      },
-      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-    })),
+    features: pointsForPeriod(period).map((p, i) => {
+      const kind = p.fatal
+        ? "Fatal crash"
+        : "Serious injury crash";
+      const who = p.cyclistHurt ? "Cyclist among those hurt" : "Killed or seriously injured (any road user)";
+      return {
+        type: "Feature",
+        id: i,
+        properties: {
+          fatal: p.fatal,
+          cyclistHurt: p.cyclistHurt,
+          year: p.year,
+          title: kind,
+          detail: who,
+          source: "Toronto Open Data · KSI",
+        },
+        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+      };
+    }),
   };
+}
+
+function popupHtml(title: string, lines: string[]): string {
+  const body = lines
+    .map((line) => `<div class="map-popup-line">${line}</div>`)
+    .join("");
+  return `<div class="map-popup"><strong>${title}</strong>${body}</div>`;
+}
+
+function bikewaysForPeriod(period: Period): GeoJSON.FeatureCollection {
+  const cutoff = period === "before" ? 2022 : 2026;
+  const features = (bikeways as GeoJSON.FeatureCollection).features.filter(
+    (f) => {
+      const year = (f.properties as { year?: number | null } | null)?.year;
+      if (year == null) return period === "before";
+      return year <= cutoff;
+    },
+  );
+  return { type: "FeatureCollection", features };
 }
 
 export function CorridorMap({ period }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  const popupRef = useRef<maplibregl.Popup | null>(null);
   const periodRef = useRef(period);
+  const readyRef = useRef(false);
   periodRef.current = period;
 
   useEffect(() => {
@@ -50,19 +114,46 @@ export function CorridorMap({ period }: Props) {
         sources: {
           osm: {
             type: "raster",
-            tiles: [
-              "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-              "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-              "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-            ],
+            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
             tileSize: 256,
-            attribution: "&copy; OpenStreetMap &copy; CARTO",
+            attribution:
+              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · City of Toronto cycling network',
+            maxzoom: 19,
+          },
+          dim: {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "Polygon",
+                coordinates: [
+                  [
+                    [-180, -85],
+                    [180, -85],
+                    [180, 85],
+                    [-180, 85],
+                    [-180, -85],
+                  ],
+                ],
+              },
+            },
           },
         },
-        layers: [{ id: "osm", type: "raster", source: "osm" }],
+        layers: [
+          { id: "osm", type: "raster", source: "osm" },
+          {
+            id: "dim",
+            type: "fill",
+            source: "dim",
+            paint: { "fill-color": "#0c1110", "fill-opacity": 0.38 },
+          },
+        ],
       },
-      bounds: BOUNDS,
-      fitBoundsOptions: { padding: 64 },
+      bounds: CORRIDOR_BOUNDS,
+      fitBoundsOptions: { padding: fitPadding(), maxZoom: 13.6 },
+      minZoom: 10.5,
+      maxZoom: 17,
       attributionControl: { compact: true },
     });
 
@@ -72,6 +163,26 @@ export function CorridorMap({ period }: Props) {
     );
 
     map.on("load", () => {
+      map.addSource("bikeways", {
+        type: "geojson",
+        data: bikewaysForPeriod(periodRef.current),
+      });
+
+      map.addLayer({
+        id: "bikeways-line",
+        type: "line",
+        source: "bikeways",
+        paint: {
+          "line-color": "#d6ff4a",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.2, 14, 3],
+          "line-opacity": 0.45,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+      });
+
       map.addSource("corridor", {
         type: "geojson",
         data: CORRIDOR_LINE,
@@ -83,9 +194,9 @@ export function CorridorMap({ period }: Props) {
         source: "corridor",
         paint: {
           "line-color": "#d6ff4a",
-          "line-width": 16,
-          "line-opacity": periodRef.current === "after" ? 0.24 : 0.06,
-          "line-blur": 6,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 10, 14, 22],
+          "line-opacity": periodRef.current === "after" ? 0.4 : 0.14,
+          "line-blur": 5,
         },
       });
 
@@ -94,9 +205,9 @@ export function CorridorMap({ period }: Props) {
         type: "line",
         source: "corridor",
         paint: {
-          "line-color": "#d6ff4a",
-          "line-width": periodRef.current === "after" ? 5 : 2,
-          "line-opacity": periodRef.current === "after" ? 0.95 : 0.35,
+          "line-color": "#f4ff9a",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 14, 7],
+          "line-opacity": periodRef.current === "after" ? 1 : 0.55,
         },
         layout: {
           "line-cap": "round",
@@ -113,19 +224,35 @@ export function CorridorMap({ period }: Props) {
         id: "ksi-heat",
         type: "heatmap",
         source: "ksi",
-        maxzoom: 16,
+        maxzoom: 15,
         paint: {
           "heatmap-weight": [
             "case",
             ["get", "fatal"],
-            1.2,
+            1.4,
             ["get", "cyclistHurt"],
             1,
-            0.7,
+            0.75,
           ],
-          "heatmap-intensity": 1.15,
-          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 11, 20, 15, 40],
-          "heatmap-opacity": 0.75,
+          "heatmap-intensity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10,
+            0.85,
+            14,
+            1.5,
+          ],
+          "heatmap-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10,
+            14,
+            14,
+            32,
+          ],
+          "heatmap-opacity": 0.8,
           "heatmap-color": [
             "interpolate",
             ["linear"],
@@ -148,21 +275,139 @@ export function CorridorMap({ period }: Props) {
         id: "ksi-points",
         type: "circle",
         source: "ksi",
+        minzoom: 10.5,
         paint: {
           "circle-radius": [
-            "case",
-            ["get", "fatal"],
-            7,
-            ["get", "cyclistHurt"],
-            6,
-            4.5,
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            11,
+            ["case", ["get", "fatal"], 5, 4],
+            15,
+            ["case", ["get", "fatal"], 8, 6],
           ],
           "circle-color": "#ff5c5c",
-          "circle-opacity": 0.92,
-          "circle-stroke-width": 1,
+          "circle-opacity": 0.95,
+          "circle-stroke-width": 1.5,
           "circle-stroke-color": "#0c1110",
         },
       });
+
+      // Bigger invisible hit target for taps
+      map.addLayer({
+        id: "ksi-hit",
+        type: "circle",
+        source: "ksi",
+        minzoom: 10.5,
+        paint: {
+          "circle-radius": 16,
+          "circle-color": "#ff5c5c",
+          "circle-opacity": 0,
+        },
+      });
+
+      map.addSource("bike-counter", {
+        type: "geojson",
+        data: bikeCounterGeoJson(),
+      });
+
+      map.addLayer({
+        id: "bike-counter-ring",
+        type: "circle",
+        source: "bike-counter",
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#d6ff4a",
+          "circle-opacity": 0.2,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#d6ff4a",
+        },
+      });
+
+      map.addLayer({
+        id: "bike-counter-point",
+        type: "circle",
+        source: "bike-counter",
+        paint: {
+          "circle-radius": 5,
+          "circle-color": "#d6ff4a",
+          "circle-opacity": 1,
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#0c1110",
+        },
+      });
+
+      map.addLayer({
+        id: "bike-counter-hit",
+        type: "circle",
+        source: "bike-counter",
+        paint: {
+          "circle-radius": 18,
+          "circle-color": "#d6ff4a",
+          "circle-opacity": 0,
+        },
+      });
+
+      const popup = new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: true,
+        maxWidth: "240px",
+        offset: 12,
+        className: "map-popup-shell",
+      });
+      popupRef.current = popup;
+
+      const setPointer = () => {
+        map.getCanvas().style.cursor = "pointer";
+      };
+      const clearPointer = () => {
+        map.getCanvas().style.cursor = "";
+      };
+
+      map.on("mouseenter", "ksi-hit", setPointer);
+      map.on("mouseleave", "ksi-hit", clearPointer);
+      map.on("mouseenter", "bike-counter-hit", setPointer);
+      map.on("mouseleave", "bike-counter-hit", clearPointer);
+
+      map.on("click", "ksi-hit", (e) => {
+        const f = e.features?.[0];
+        if (!f?.geometry || f.geometry.type !== "Point") return;
+        const p = f.properties ?? {};
+        const coords = f.geometry.coordinates.slice() as [number, number];
+        popup
+          .setLngLat(coords)
+          .setHTML(
+            popupHtml(String(p.title ?? "Serious crash"), [
+              String(p.detail ?? ""),
+              `Year: ${p.year}`,
+              String(p.source ?? "Toronto Open Data · KSI"),
+            ]),
+          )
+          .addTo(map);
+      });
+
+      map.on("click", "bike-counter-hit", (e) => {
+        const f = e.features?.[0];
+        if (!f?.geometry || f.geometry.type !== "Point") return;
+        const p = f.properties ?? {};
+        const coords = f.geometry.coordinates.slice() as [number, number];
+        popup
+          .setLngLat(coords)
+          .setHTML(
+            popupHtml("Permanent bike counter", [
+              String(p.site ?? p.label ?? "Bloor St W"),
+              "City open data · counts people biking past this spot",
+            ]),
+          )
+          .addTo(map);
+      });
+
+      const syncMarkers = () => {
+        const show = map.getZoom() >= 12.5;
+        for (const m of markersRef.current) {
+          m.getElement().style.display = show ? "block" : "none";
+        }
+      };
 
       for (const landmark of LANDMARKS) {
         const el = document.createElement("div");
@@ -176,17 +421,26 @@ export function CorridorMap({ period }: Props) {
           "white-space:nowrap",
           "pointer-events:none",
           "transform:translateY(8px)",
+          "display:none",
         ].join(";");
-        const marker = new maplibregl.Marker({ element: el, anchor: "top" })
-          .setLngLat([landmark.lon, landmark.lat])
-          .addTo(map);
-        markersRef.current.push(marker);
+        markersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: "top" })
+            .setLngLat([landmark.lon, landmark.lat])
+            .addTo(map),
+        );
       }
+
+      map.on("zoom", syncMarkers);
+      syncMarkers();
+      readyRef.current = true;
+      fitToCorridor(map, false);
     });
 
     mapRef.current = map;
-
     return () => {
+      readyRef.current = false;
+      popupRef.current?.remove();
+      popupRef.current = null;
       for (const m of markersRef.current) m.remove();
       markersRef.current = [];
       map.remove();
@@ -196,29 +450,29 @@ export function CorridorMap({ period }: Props) {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
+    if (!map || !readyRef.current) return;
 
     const ksi = map.getSource("ksi") as maplibregl.GeoJSONSource | undefined;
     ksi?.setData(ksiGeoJson(period));
+    popupRef.current?.remove();
+
+    const ways = map.getSource("bikeways") as maplibregl.GeoJSONSource | undefined;
+    ways?.setData(bikewaysForPeriod(period));
 
     if (map.getLayer("corridor-glow")) {
       map.setPaintProperty(
         "corridor-glow",
         "line-opacity",
-        period === "after" ? 0.24 : 0.06,
-      );
-      map.setPaintProperty(
-        "corridor-line",
-        "line-width",
-        period === "after" ? 5 : 2,
+        period === "after" ? 0.4 : 0.14,
       );
       map.setPaintProperty(
         "corridor-line",
         "line-opacity",
-        period === "after" ? 0.95 : 0.35,
+        period === "after" ? 1 : 0.55,
       );
     }
+
   }, [period]);
 
-  return <div className="map-root" ref={rootRef} aria-label="Bloor West map" />;
+  return <div className="map-root" ref={rootRef} aria-label="Toronto map" />;
 }
