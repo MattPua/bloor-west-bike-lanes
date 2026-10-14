@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Bike lanes on Bloor Street West">
+  <defs>
+    <radialGradient id="blueWash" cx="10%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#236192" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#236192" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="greenWash" cx="100%" cy="100%" r="60%">
+      <stop offset="0%" stop-color="#5a7c12" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#5a7c12" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bikeGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c8e86a"/>
+      <stop offset="100%" stop-color="#6f9020"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#f2f4f3"/>
+  <rect width="1200" height="630" fill="url(#blueWash)"/>
+  <rect width="1200" height="630" fill="url(#greenWash)"/>
+
+  <text x="64" y="88" fill="#236192" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" letter-spacing="4" font-weight="500">TORONTO</text>
+
+  <text x="64" y="180" fill="#1c211e" font-family="ui-sans-serif, system-ui, Helvetica, Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">Bike lanes on</text>
+  <text x="64" y="258" fill="#1c211e" font-family="ui-sans-serif, system-ui, Helvetica, Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">Bloor Street West</text>
+
+  <text x="64" y="320" fill="#3a423c" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24">Ontario files, City numbers, and a before/after map.</text>
+
+  <!-- Street diagram -->
+  <g transform="translate(64 420)">
+    <rect width="820" height="120" fill="#1a1c19" stroke="#1c211e" stroke-opacity="0.14"/>
+    <rect x="0" y="0" width="36" height="120" fill="#2a2c28"/>
+    <rect x="36" y="0" width="140" height="120" fill="url(#bikeGrad)"/>
+    <rect x="160" y="0" width="16" height="120" fill="#5c615a"/>
+    <circle cx="168" cy="18" r="4" fill="#f0c070"/>
+    <circle cx="168" cy="40" r="4" fill="#f0c070"/>
+    <circle cx="168" cy="62" r="4" fill="#f0c070"/>
+    <circle cx="168" cy="84" r="4" fill="#f0c070"/>
+    <circle cx="168" cy="106" r="4" fill="#f0c070"/>
+    <rect x="176" y="0" width="468" height="120" fill="#3a3c38"/>
+    <rect x="406" y="12" width="8" height="36" fill="#d4a84b"/>
+    <rect x="406" y="72" width="8" height="36" fill="#d4a84b"/>
+    <rect x="644" y="0" width="16" height="120" fill="#5c615a"/>
+    <circle cx="652" cy="18" r="4" fill="#f0c070"/>
+    <circle cx="652" cy="40" r="4" fill="#f0c070"/>
+    <circle cx="652" cy="62" r="4" fill="#f0c070"/>
+    <circle cx="652" cy="84" r="4" fill="#f0c070"/>
+    <circle cx="652" cy="106" r="4" fill="#f0c070"/>
+    <rect x="660" y="0" width="124" height="120" fill="url(#bikeGrad)"/>
+    <rect x="784" y="0" width="36" height="120" fill="#2a2c28"/>
+  </g>
+
+  <circle cx="940" cy="500" r="7" fill="#c4102e"/>
+  <text x="958" y="507" fill="#3a423c" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill-opacity="0.75">Before / after · 20162026</text>
+</svg>

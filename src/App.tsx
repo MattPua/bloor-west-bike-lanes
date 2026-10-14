@@ -1,8 +1,14 @@
 import { useMemo, useState } from "react";
 import { CorridorMap } from "./components/CorridorMap";
-import { AnimatedNumber } from "./components/AnimatedNumber";
+import { IntroHook } from "./components/IntroHook";
+import { OntarioHook } from "./components/OntarioHook";
+import { ReportedHook } from "./components/ReportedHook";
+import { CalloutList } from "./components/Callout";
+import { ShareBar } from "./components/ShareBar";
 import {
   CHART_SOURCES,
+  CITY_FINDINGS,
+  COUNCIL_VOTE,
   CYCLING,
   LINKS,
   META,
@@ -10,9 +16,12 @@ import {
   ONTARIO_ADVICE,
   SPEED,
   TRAVEL_TIME,
+  avgP95Speed,
   avgSpeed,
+  cyclistsPerYearApprox,
   ksiPerYear,
-  pointsForPeriod,
+  ksiTotal,
+  ksiYears,
   totalCyclists,
   travelMinutes,
   type Cite,
@@ -63,14 +72,7 @@ export default function App() {
   const [period, setPeriod] = useState<Period>("before");
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [chartsOpen, setChartsOpen] = useState(false);
-  const [flippedOnce, setFlippedOnce] = useState(false);
-
   const onMap = step === STEPS.length - 1;
-
-  const selectPeriod = (next: Period) => {
-    if (next !== period) setFlippedOnce(true);
-    setPeriod(next);
-  };
 
   const go = (next: number) => {
     setStep(Math.max(0, Math.min(STEPS.length - 1, next)));
@@ -78,74 +80,35 @@ export default function App() {
   };
 
   const metrics = useMemo(() => {
-    const ksi = ksiPerYear(period);
-    const travel = travelMinutes(period);
-    const cyclists = totalCyclists(period);
-    const speed = avgSpeed(period);
-    const crashes = pointsForPeriod(period).length;
+    const ksiBefore = ksiPerYear("before");
+    const ksiAfter = ksiPerYear("after");
+    const travelBefore = travelMinutes("before");
+    const travelAfter = travelMinutes("after");
+    const bikeBefore = totalCyclists("before");
+    const bikeAfter = totalCyclists("after");
+    const travelMinsAdded = travelAfter - travelBefore;
 
     return {
-      ksi,
-      travel,
-      cyclists,
-      speed,
-      crashes,
-      ksiDelta: pctChange(ksiPerYear("before"), ksiPerYear("after")),
-      travelDelta: pctChange(travelMinutes("before"), travelMinutes("after")),
-      cyclistsDelta: pctChange(totalCyclists("before"), totalCyclists("after")),
+      speed: avgSpeed(period),
+      p95: avgP95Speed(period),
+      ksiBefore,
+      ksiAfter,
+      travelBefore,
+      travelAfter,
+      bikeBefore,
+      bikeAfter,
+      ksiDelta: pctChange(ksiBefore, ksiAfter),
+      travelDelta: pctChange(travelBefore, travelAfter),
+      cyclistsDelta: pctChange(bikeBefore, bikeAfter),
+      travelMinsAdded,
+      travelMinsLabel:
+        travelMinsAdded >= 0
+          ? `+${travelMinsAdded.toFixed(1)} min`
+          : `${travelMinsAdded.toFixed(1)} min`,
     };
   }, [period]);
 
-  const reportCards = useMemo(
-    () => [
-      {
-        tone: "crash" as const,
-        label: "Serious crashes / year",
-        before: ksiPerYear("before"),
-        after: ksiPerYear("after"),
-        decimals: 1,
-        unit: "",
-        delta: pctChange(ksiPerYear("before"), ksiPerYear("after")),
-        bullets: [
-          "People killed or seriously hurt on this stretch",
-          "Toronto Open Data KSI, annualized",
-        ],
-        links: METRIC_SOURCES.ksi,
-      },
-      {
-        tone: "amber" as const,
-        label: "Afternoon drive, end to end",
-        before: travelMinutes("before"),
-        after: travelMinutes("after"),
-        decimals: 1,
-        unit: "min",
-        delta: pctChange(travelMinutes("before"), travelMinutes("after")),
-        bullets: [
-          "Weekday PM peak, Resurrection to Runnymede",
-          "Rose through 2025, lower in 2026 on this stretch",
-          "City compares the rise to citywide congestion",
-        ],
-        links: METRIC_SOURCES.travel,
-      },
-      {
-        tone: "bike" as const,
-        label: "People on bikes / day",
-        before: totalCyclists("before"),
-        after: totalCyclists("after"),
-        decimals: 0,
-        unit: "",
-        delta: pctChange(totalCyclists("before"), totalCyclists("after")),
-        bullets: [
-          "City spot counts at four sites on the corridor",
-          `Old Mill permanent counter +${BIKE_COUNTER.summerAvgGrowthPct}% May to August, 2025 to 2026`,
-        ],
-        links: METRIC_SOURCES.cyclists,
-      },
-    ],
-    [],
-  );
-
-  const speedMax = Math.max(...SPEED.before, ...SPEED.after);
+  const speedMax = Math.max(...SPEED.p95.before, ...SPEED.p95.after);
   const cycleMax = Math.max(...CYCLING.before, ...CYCLING.after);
   const counterMonths = bikeCounterChartMonths();
   const counterMax = Math.max(...counterMonths.map((m) => m.avgDay), 1);
@@ -164,7 +127,7 @@ export default function App() {
       {!onMap ? (
         <div className="story">
           <header className="story-top">
-            <p className="eyebrow">Toronto · Bloor West</p>
+            <p className="eyebrow">Toronto</p>
             <div className="step-dots" aria-label={`Step ${step + 1} of ${STEPS.length}`}>
               {STEPS.map((s, i) => (
                 <button
@@ -183,28 +146,27 @@ export default function App() {
           <main className="story-main" key={STEPS[step].id}>
             {step === 0 ? (
               <section className="story-panel intro">
-                <h1>Bloor West bike lanes</h1>
-                <p className="story-lede">
-                  In 2023 and 2024, Toronto installed protected bike lanes on
-                  4.7 km of Bloor Street West, from Runnymede to Resurrection.
-                </p>
-                <ul className="lede-bullets">
-                  <li>What the province's documents said about removing them</li>
-                  <li>What City monitoring reported afterward</li>
-                  <li>A map of the stretch you can flip before and after</li>
-                </ul>
+                <div className="intro-copy">
+                  <h1>Bike lanes on Bloor Street West</h1>
+                  <p className="story-lede">
+                    In 2023 and 2024, Toronto put barrier-separated bike lanes on
+                    Bloor Street West. Next: Ontario&apos;s own files on taking
+                    them out, then the City&apos;s before and after numbers, then
+                    a map.
+                  </p>
+                </div>
+                <IntroHook />
               </section>
             ) : null}
 
             {step === 1 ? (
               <section className="story-panel advice">
-                <p className="step-kicker">2 of 4 · The paper trail</p>
+                <p className="step-kicker">2 of 4 · Ontario</p>
                 <h1>{ONTARIO_ADVICE.headline}</h1>
-                <ul className="advice-bullets">
-                  {ONTARIO_ADVICE.bullets.map((b) => (
-                    <li key={b}>{b}</li>
-                  ))}
-                </ul>
+                <p className="story-lede">{ONTARIO_ADVICE.lede}</p>
+                <OntarioHook />
+                <CalloutList items={ONTARIO_ADVICE.callouts} />
+                <p className="advice-after-note">{ONTARIO_ADVICE.afterNote}</p>
                 <p className="advice-cites">
                   <CiteLinks links={ONTARIO_ADVICE.links} prefix="Sources" />
                 </p>
@@ -213,63 +175,49 @@ export default function App() {
 
             {step === 2 ? (
               <section className="story-panel reported">
-                <p className="step-kicker">3 of 4 · What was measured</p>
-                <h1>Before and after on this stretch</h1>
-                <ul className="lede-bullets">
-                  <li>Before: 2016 to 2022</li>
-                  <li>After: 2024 to 2026, once Phase 2 was in</li>
-                  <li>Figures from City reports and open data</li>
-                </ul>
-                <div className="report-grid">
-                  {reportCards.map((card) => (
-                    <article
-                      key={card.label}
-                      className="report-card"
-                      data-tone={card.tone}
-                    >
-                      <div className="label">{card.label}</div>
-                      <div className="report-compare">
-                        <div>
-                          <span className="tag">Before</span>
-                          <strong>
-                            {card.before.toFixed(card.decimals)}
-                            {card.unit ? ` ${card.unit}` : ""}
-                          </strong>
-                        </div>
-                        <span className="arrow" aria-hidden>
-                          →
-                        </span>
-                        <div>
-                          <span className="tag">After</span>
-                          <strong>
-                            {card.after.toFixed(card.decimals)}
-                            {card.unit ? ` ${card.unit}` : ""}
-                          </strong>
-                        </div>
-                        <span className="delta">{card.delta}</span>
-                      </div>
-                      <ul className="card-bullets">
-                        {card.bullets.map((b) => (
-                          <li key={b}>{b}</li>
-                        ))}
-                      </ul>
-                      <CiteLinks links={card.links} />
-                    </article>
-                  ))}
-                </div>
-                <div className="report-extras">
-                  {META.context.slice(0, 4).map((c) => (
-                    <article key={c.headline} className="context-item">
-                      <h4>{c.headline}</h4>
-                      <ul className="card-bullets">
-                        {c.bullets.map((b) => (
-                          <li key={b}>{b}</li>
-                        ))}
-                      </ul>
-                      <CiteLinks links={c.links} prefix="" />
-                    </article>
-                  ))}
-                </div>
+                <p className="step-kicker">3 of 4 · City numbers</p>
+                <h1>City measurements on this stretch</h1>
+                <p className="story-lede">
+                  Before means {META.beforeYears}. After means {META.afterYears},
+                  once both build phases were done.
+                </p>
+                <aside className="city-findings">
+                  <p className="city-findings-title">{CITY_FINDINGS.title}</p>
+                  <ul>
+                    {CITY_FINDINGS.items.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <p className="city-findings-cite">
+                    <CiteLinks links={[LINKS.fall2026]} />
+                  </p>
+                </aside>
+                <ReportedHook
+                  crashBefore={ksiPerYear("before")}
+                  crashAfter={ksiPerYear("after")}
+                  crashDelta={pctChange(
+                    ksiPerYear("before"),
+                    ksiPerYear("after"),
+                  )}
+                  crashTotalBefore={ksiTotal("before")}
+                  crashTotalAfter={ksiTotal("after")}
+                  crashYearsBefore={ksiYears("before")}
+                  crashYearsAfter={ksiYears("after")}
+                  bikeBefore={totalCyclists("before")}
+                  bikeAfter={totalCyclists("after")}
+                  bikeDelta={pctChange(
+                    totalCyclists("before"),
+                    totalCyclists("after"),
+                  )}
+                  bikeYearBefore={cyclistsPerYearApprox("before")}
+                  bikeYearAfter={cyclistsPerYearApprox("after")}
+                  travelBefore={travelMinutes("before")}
+                  travelAfter={travelMinutes("after")}
+                  crashLinks={METRIC_SOURCES.ksi}
+                  speedLinks={METRIC_SOURCES.speed}
+                  bikeLinks={METRIC_SOURCES.cyclists}
+                  travelLinks={METRIC_SOURCES.travel}
+                />
               </section>
             ) : null}
           </main>
@@ -283,11 +231,7 @@ export default function App() {
               <span />
             )}
             <button type="button" className="nav-btn primary" onClick={() => go(step + 1)}>
-              {step === 0
-                ? "Next"
-                : step === 1
-                  ? "What was measured"
-                  : "Open the map"}
+              {step === 0 ? "Next" : step === 1 ? "City numbers" : "See the map"}
             </button>
           </footer>
         </div>
@@ -296,12 +240,7 @@ export default function App() {
           <div className="top-bar">
             <div className="brand compact">
               <p className="eyebrow">4 of 4 · Map</p>
-              <h1>Bloor West bike lanes</h1>
-              <div className="period-chip" data-period={period}>
-                {period === "before"
-                  ? `Showing ${META.beforeYears}`
-                  : `Showing ${META.afterYears}`}
-              </div>
+              <h1>Bike lanes on Bloor Street West</h1>
             </div>
             <div className="top-actions">
               <button
@@ -331,62 +270,83 @@ export default function App() {
 
           <div className="bottom-stack">
             <div className="legend" aria-hidden>
-              <div className="legend-row legend-label">On the map</div>
               <div className="legend-row">
-                <span className="dot lane" style={{ opacity: 0.45 }} /> Other bike
-                lanes
+                <span className="dot lane" /> Corridor
               </div>
               <div className="legend-row">
-                <span className="dot lane" /> Bloor West
+                <span className="dot crash-fatal" /> Died
               </div>
               <div className="legend-row">
-                <span className="dot" /> Serious crashes (tap)
+                <span className="dot crash-major" /> Badly hurt
               </div>
               <div className="legend-row">
-                <span className="dot counter" /> Bike counter (tap)
+                <span className="dot crash-cyclist" /> Cyclist hurt
               </div>
               <div className="legend-row">
-                Avg {metrics.speed.toFixed(0)} km/h
+                <span className="dot counter" /> Counter
+              </div>
+              <div className="legend-row">
+                {metrics.p95.toFixed(0)} km/h 95th
               </div>
             </div>
 
             <div className="metrics" aria-live="polite">
               <div className="metric" data-tone="crash">
                 <div className="label">Serious crashes / year</div>
-                <div className="value">
-                  <AnimatedNumber value={metrics.ksi} decimals={1} />
+                <div className="compare" data-period={period}>
+                  <span className="compare-num" data-side="before">
+                    {metrics.ksiBefore.toFixed(1)}
+                  </span>
+                  <span className="compare-arrow" aria-hidden>
+                    →
+                  </span>
+                  <span className="compare-num" data-side="after">
+                    {metrics.ksiAfter.toFixed(1)}
+                  </span>
                 </div>
-                <div className="delta">
-                  Change: <strong>{metrics.ksiDelta}</strong>
-                </div>
+                <p className="impact">
+                  <strong>{metrics.ksiDelta}</strong> once the lanes were in
+                </p>
               </div>
               <div className="metric" data-tone="amber">
-                <div className="label">Afternoon drive</div>
-                <div className="value">
-                  <AnimatedNumber value={metrics.travel} decimals={1} />
-                  <span style={{ fontSize: "0.45em", marginLeft: 4 }}>min</span>
+                <div className="label">Afternoon drive · 4 to 7 pm</div>
+                <div className="compare" data-period={period}>
+                  <span className="compare-num" data-side="before">
+                    {metrics.travelBefore.toFixed(1)}
+                    <span className="compare-unit">min</span>
+                  </span>
+                  <span className="compare-arrow" aria-hidden>
+                    →
+                  </span>
+                  <span className="compare-num" data-side="after">
+                    {metrics.travelAfter.toFixed(1)}
+                    <span className="compare-unit">min</span>
+                  </span>
                 </div>
-                <div className="delta">
-                  Change: <strong>{metrics.travelDelta}</strong>
-                </div>
+                <p className="impact">
+                  <strong>{metrics.travelMinsLabel}</strong> ({metrics.travelDelta})
+                </p>
               </div>
               <div className="metric" data-tone="bike">
                 <div className="label">People on bikes / day</div>
-                <div className="value">
-                  <AnimatedNumber value={metrics.cyclists} decimals={0} />
+                <div className="compare" data-period={period}>
+                  <span className="compare-num" data-side="before">
+                    {Math.round(metrics.bikeBefore).toLocaleString()}
+                  </span>
+                  <span className="compare-arrow" aria-hidden>
+                    →
+                  </span>
+                  <span className="compare-num" data-side="after">
+                    {Math.round(metrics.bikeAfter).toLocaleString()}
+                  </span>
                 </div>
-                <div className="delta">
-                  Change: <strong>{metrics.cyclistsDelta}</strong>
-                </div>
+                <p className="impact">
+                  <strong>{metrics.cyclistsDelta}</strong> once the lanes were in
+                </p>
               </div>
             </div>
 
             <div className="toggle-wrap">
-              <p className="toggle-hint" data-done={flippedOnce}>
-                {flippedOnce
-                  ? "Map and numbers match the years you pick."
-                  : "Switch years to compare before and after."}
-              </p>
               <div
                 className="toggle"
                 role="group"
@@ -397,7 +357,7 @@ export default function App() {
                   type="button"
                   className="toggle-btn"
                   data-active={period === "before"}
-                  onClick={() => selectPeriod("before")}
+                  onClick={() => setPeriod("before")}
                 >
                   <span className="when">Before</span>
                   <span className="years">{META.beforeYears}</span>
@@ -407,13 +367,15 @@ export default function App() {
                   type="button"
                   className="toggle-btn"
                   data-active={period === "after"}
-                  onClick={() => selectPeriod("after")}
+                  onClick={() => setPeriod("after")}
                 >
                   <span className="when">After</span>
                   <span className="years">{META.afterYears}</span>
                 </button>
               </div>
             </div>
+
+            <ShareBar />
           </div>
         </div>
       )}
@@ -421,13 +383,14 @@ export default function App() {
       {chartsOpen && onMap ? (
         <aside className="charts-panel" aria-label="Charts">
           <div>
-            <h2>Car speed (km/h)</h2>
+            <h2>95th percentile speed (km/h)</h2>
             <p className="chart-cite">
               <CiteLinks links={CHART_SOURCES.speed} />
+              {" · "}posted {SPEED.postedLimitKmh} km/h
             </p>
             <div className="bars">
               {SPEED.sites.map((site, i) => {
-                const v = SPEED[period][i] ?? 0;
+                const v = SPEED.p95[period][i] ?? 0;
                 return (
                   <div className="bar-row" key={site}>
                     <div className="name">{site}</div>
@@ -435,6 +398,13 @@ export default function App() {
                       <div
                         className="bar-fill"
                         style={{ width: `${(v / speedMax) * 100}%` }}
+                      />
+                      <div
+                        className="bar-limit"
+                        style={{
+                          left: `${(SPEED.postedLimitKmh / speedMax) * 100}%`,
+                        }}
+                        title={`Posted ${SPEED.postedLimitKmh} km/h`}
                       />
                     </div>
                     <div className="num">{v.toFixed(0)}</div>
@@ -505,9 +475,16 @@ export default function App() {
             <p className="chart-note">{BIKE_COUNTER.note}</p>
           </div>
           <div>
-            <h2>Drive time (left = before, right = after)</h2>
+            <h2>Drive time · weekday afternoon, 4 to 7 pm</h2>
             <p className="chart-cite">
               <CiteLinks links={CHART_SOURCES.travel} />
+            </p>
+            <p className="chart-note">
+              After install: afternoon +{TRAVEL_TIME.changeByTimeOfDay.afternoonPeak.low}–
+              {TRAVEL_TIME.changeByTimeOfDay.afternoonPeak.high} min · other times +
+              {TRAVEL_TIME.changeByTimeOfDay.offPeak.low}–
+              {TRAVEL_TIME.changeByTimeOfDay.offPeak.high} min.{" "}
+              {TRAVEL_TIME.citywide.shortHud}.
             </p>
             <div className="spark">
               <div className="spark-col">
@@ -562,8 +539,60 @@ export default function App() {
             aria-labelledby="sources-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="sources-title">Where the numbers come from</h2>
-            <ul>
+            <h2 id="sources-title">Sources</h2>
+            <p className="sources-lede">
+              Before is {META.beforeYears}. After is {META.afterYears}. Phase 1:{" "}
+              {META.phase1}. Phase 2: {META.phase2}. About the lanes going in,
+              not the provincial teardown that started in October 2026.
+            </p>
+
+            <section className="sources-vote">
+              <h3>Who voted on the Bloor lanes</h3>
+              <p>
+                {COUNCIL_VOTE.summary} Recorded votes from{" "}
+                <a
+                  href={LINKS.councilIE43.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {COUNCIL_VOTE.item}
+                </a>
+                , {COUNCIL_VOTE.date}.
+              </p>
+
+              <h4>{COUNCIL_VOTE.stripBloor.label}</h4>
+              <p className="sources-vote-result">
+                {COUNCIL_VOTE.stripBloor.result}
+              </p>
+              <p>
+                <strong>Yes</strong> ({COUNCIL_VOTE.stripBloor.yesMeans}):{" "}
+                {COUNCIL_VOTE.stripBloor.yes.join(", ")}
+              </p>
+              <p>
+                <strong>No</strong> ({COUNCIL_VOTE.stripBloor.noMeans}):{" "}
+                {COUNCIL_VOTE.stripBloor.no.join(", ")}
+              </p>
+              <p>
+                <strong>Absent:</strong>{" "}
+                {COUNCIL_VOTE.stripBloor.absent.join(", ")}
+              </p>
+
+              <h4>{COUNCIL_VOTE.adopt.label}</h4>
+              <p className="sources-vote-result">
+                {COUNCIL_VOTE.adopt.result}
+              </p>
+              <p>
+                <strong>Yes:</strong> {COUNCIL_VOTE.adopt.yes.join(", ")}
+              </p>
+              <p>
+                <strong>No:</strong> {COUNCIL_VOTE.adopt.no.join(", ")}
+              </p>
+              <p>
+                <strong>Absent:</strong> {COUNCIL_VOTE.adopt.absent.join(", ")}
+              </p>
+            </section>
+
+            <ul className="sources-list">
               {META.sources.map((s) => (
                 <li key={s.href}>
                   <a href={s.href} target="_blank" rel="noopener noreferrer">
@@ -571,38 +600,7 @@ export default function App() {
                   </a>
                 </li>
               ))}
-              <li>
-                "No protected lanes" is 2016 to 2022. "Lanes in" is 2024 to
-                2026, after Phase 2 finished.
-              </li>
-              <li>
-                Built in two chunks: {META.phase1}. Then {META.phase2}.{" "}
-                <CiteLinks links={[LINKS.projectPage]} prefix="See" />
-              </li>
-              <li>
-                This is about the lanes going in. Not the provincial teardown
-                that started in October 2026.{" "}
-                <CiteLinks links={[LINKS.ontarioNewsroom]} prefix="See" />
-              </li>
             </ul>
-
-            <h3 className="context-title">More from the public record</h3>
-            <p className="context-lede">
-              Tap a source for the original document or page.
-            </p>
-            <div className="context-grid">
-              {META.context.map((c) => (
-                <article key={c.headline} className="context-item">
-                  <h4>{c.headline}</h4>
-                  <ul className="card-bullets">
-                    {c.bullets.map((b) => (
-                      <li key={b}>{b}</li>
-                    ))}
-                  </ul>
-                  <CiteLinks links={c.links} prefix="" />
-                </article>
-              ))}
-            </div>
             <button
               type="button"
               className="close"

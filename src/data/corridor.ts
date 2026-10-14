@@ -42,6 +42,26 @@ export type KsiPoint = {
   cyclistHurt: boolean;
 };
 
+/** Map icon / legend bucket from open-data flags. */
+export type KsiSeverity = "fatal" | "major" | "cyclist";
+
+export function ksiSeverity(p: Pick<KsiPoint, "fatal" | "cyclistHurt">): KsiSeverity {
+  if (p.fatal) return "fatal";
+  if (p.cyclistHurt) return "cyclist";
+  return "major";
+}
+
+export function ksiSeverityLabel(severity: KsiSeverity): string {
+  switch (severity) {
+    case "fatal":
+      return "Someone died";
+    case "cyclist":
+      return "Cyclist badly hurt";
+    default:
+      return "Someone badly hurt";
+  }
+}
+
 export const KSI_POINTS: KsiPoint[] = [
   { year: 2016, lon: -79.52343, lat: 43.64464, fatal: false, cyclistHurt: false },
   { year: 2016, lon: -79.50775, lat: 43.64816, fatal: true, cyclistHurt: false },
@@ -81,16 +101,84 @@ export function pointsForPeriod(period: Period): KsiPoint[] {
   return KSI_POINTS.filter((p) => p.year >= 2024 && p.year <= 2026);
 }
 
-export function ksiPerYear(period: Period): number {
-  const pts = pointsForPeriod(period);
-  if (period === "before") return pts.length / 7;
-  return pts.length / 3; // 2024 to 2026
+export function ksiYears(period: Period): number {
+  return period === "before" ? 7 : 3;
 }
 
-/** City Fall 2026 report. PM peak end-to-end minutes (Mar to Jul). */
+export function ksiTotal(period: Period): number {
+  return pointsForPeriod(period).length;
+}
+
+export function ksiPerYear(period: Period): number {
+  return ksiTotal(period) / ksiYears(period);
+}
+
+/** If the before yearly rate held for the after window’s length. */
+export function ksiProjectedAtBeforeRate(years = ksiYears("after")): number {
+  return ksiPerYear("before") * years;
+}
+
+/**
+ * City Fall 2026 report travel times.
+ * Absolute PM peak minutes: Mar–Jul each year, Runnymede ↔ Resurrection.
+ * Peak vs off-peak deltas: before vs after install (report prose).
+ * Citywide: Travel Time Index (peak hour vs overnight free-flow on major corridors).
+ */
 export const TRAVEL_TIME = {
   before: { west: 9.0, east: 9.4, label: "2022" },
   after: { west: 13.6, east: 13.1, label: "2026" },
+  /** Peak year before the 2026 ease (both directions, Mar–Jul). */
+  peakYear: { west: 13.6, east: 15.2, label: "2025" },
+  /** Mar–Jul weekday PM peak, both directions — report table. */
+  byYear: {
+    west: [9.0, 10.0, 13.1, 13.6, 13.6],
+    east: [9.4, 10.0, 15.5, 15.2, 13.1],
+    years: [2022, 2023, 2024, 2025, 2026],
+  },
+  /** Minutes added after install, by time of day (both directions). */
+  changeByTimeOfDay: {
+    afternoonPeak: { low: 3, high: 5, label: "Weekday afternoon (4 to 7 pm)" },
+    offPeak: { low: 1, high: 3, label: "Other times of day" },
+  },
+  /**
+   * City Travel Time Index (TTI): weekday 5-6 pm travel vs overnight free-flow.
+   * Not corridor minutes. From Congestion Management Plan 2026 spring materials.
+   * 1.0 = free-flow; 1.75 means ~75% longer than free-flow.
+   */
+  citywide: {
+    metric: "Travel Time Index",
+    window: "Weekday 5 to 6 pm vs overnight free-flow",
+    /** Annual citywide TTI */
+    tti: {
+      "2024": 1.75,
+      "2025": 1.72,
+    },
+    ttiChangePct: -2,
+    downtownTti: {
+      "2024": 2.12,
+      "2025": 1.95,
+    },
+    downtownChangePct: -8,
+    note:
+      "Different unit than the Bloor minutes above. By 2024, citywide afternoon congestion was back near pre-pandemic.",
+    shortHud:
+      "Citywide afternoon Travel Time Index: 1.75 in 2024, 1.72 in 2025 (-2%)",
+  },
+} as const;
+
+/**
+ * City Fall 2026 “Summary of findings” — plain restatement for the City numbers step.
+ * Every line should be backed by a beat below / the cited report.
+ */
+export const CITY_FINDINGS = {
+  title: "What the City’s Fall 2026 report concluded",
+  items: [
+    "Fewer people killed or seriously injured within the project limits.",
+    "Lower motor vehicle speeds — averages closer to the posted limit, and fewer instances of excessive speeding.",
+    "Drive times rose from 2022 to 2025, in line with broader city-wide congestion, then eased on this stretch between 2025 and 2026.",
+    "Increased cycling along the corridor.",
+  ],
+  linkKey: "fall2026" as const,
 } as const;
 
 export function travelMinutes(period: Period): number {
@@ -98,10 +186,23 @@ export function travelMinutes(period: Period): number {
   return (t.west + t.east) / 2;
 }
 
-/** Average of five corridor speed sites (km/h). */
+export function travelPeakChangeLabel(): string {
+  const { low, high } = TRAVEL_TIME.changeByTimeOfDay.afternoonPeak;
+  return `+${low}-${high} min`;
+}
+
+export function travelOffPeakChangeLabel(): string {
+  const { low, high } = TRAVEL_TIME.changeByTimeOfDay.offPeak;
+  return `+${low}-${high} min`;
+}
+
+/**
+ * Vehicle speeds at five corridor sites (City Fall 2026 report).
+ * Periods grouped as in the report: 2021/23 → 2024 → 2025/26.
+ * Posted limit cut from 50 to 40 km/h in 2024 (Runnymede–Kipling).
+ */
 export const SPEED = {
-  before: [50.7, 44.3, 56.5, 59.9, 35.7],
-  after: [36.75, 29.6, 42.1, 39.2, 31],
+  postedLimitKmh: 40,
   sites: [
     "Cosmo",
     "Cliveden",
@@ -109,11 +210,60 @@ export const SPEED = {
     "Riverside",
     "Durie",
   ],
+  /** Mean speed (km/h) */
+  average: {
+    before: [50.7, 44.3, 56.5, 59.9, 35.7],
+    mid: [42.8, 33.8, 45.4, 48.2, 32.8],
+    after: [36.75, 29.6, 42.1, 39.2, 31],
+  },
+  /**
+   * 95th percentile (km/h) — top-end speeding.
+   * Report: down ~5–20 km/h; fewer instances of excessive speeding.
+   */
+  p95: {
+    before: [66.4, 58.3, 72.2, 74.5, 49.8],
+    mid: [56.7, 48.8, 57.6, 63.5, 48.2],
+    after: [53.15, 44.4, 53.15, 54.2, 44.2],
+  },
+  labels: {
+    before: "2021/23",
+    mid: "2024",
+    after: "2025/26",
+  },
 } as const;
 
+/** Mean of site averages for before/after (map HUD + charts). */
 export function avgSpeed(period: Period): number {
-  const arr = SPEED[period];
+  const arr = SPEED.average[period];
   return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+/** Mean of 95th-percentile speeds across the five sites. */
+export function avgP95Speed(period: Period): number {
+  const arr = SPEED.p95[period];
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+/** Largest site-level drop in 95th percentile (before → after), km/h. */
+export function maxP95Drop(): { site: string; before: number; after: number; drop: number } {
+  let best = {
+    site: SPEED.sites[0],
+    before: SPEED.p95.before[0],
+    after: SPEED.p95.after[0],
+    drop: SPEED.p95.before[0] - SPEED.p95.after[0],
+  };
+  for (let i = 1; i < SPEED.sites.length; i++) {
+    const drop = SPEED.p95.before[i] - SPEED.p95.after[i];
+    if (drop > best.drop) {
+      best = {
+        site: SPEED.sites[i],
+        before: SPEED.p95.before[i],
+        after: SPEED.p95.after[i],
+        drop,
+      };
+    }
+  }
+  return best;
 }
 
 /** Daily cyclists at four count sites (both directions). */
@@ -127,14 +277,56 @@ export function totalCyclists(period: Period): number {
   return CYCLING[period].reduce((a, b) => a + b, 0);
 }
 
+/**
+ * Rough yearly trips if every day matched the City’s count-day total
+ * across the four sites (weekday / summer-fall counts; approximate).
+ */
+export function cyclistsPerYearApprox(period: Period): number {
+  return Math.round(totalCyclists(period) * 365);
+}
+
+export function formatApproxTrips(n: number): string {
+  if (n >= 1_000_000) return `~${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `~${Math.round(n / 1000)}k`;
+  return `~${n.toLocaleString()}`;
+}
+
+/**
+ * Toronto Police Service Traffic Collisions Open Data, points within ~50 m
+ * of the corridor centreline (Resurrection → Runnymede).
+ * After window is full years 2024–2025 only (2026 still partial in the feed).
+ * Flags are involvement (PEDESTRIAN / BICYCLE = YES), not exclusive modes.
+ */
+export const TPS_COLLISIONS = {
+  bufferM: 50,
+  before: {
+    years: 7,
+    label: "2016 to 2022",
+    pedInjury: 59,
+    pedInjuryPerYear: 59 / 7,
+    bike: 22,
+    bikePerYear: 22 / 7,
+  },
+  after: {
+    years: 2,
+    label: "2024 to 2025",
+    pedInjury: 10,
+    pedInjuryPerYear: 10 / 2,
+    bike: 18,
+    bikePerYear: 18 / 2,
+  },
+} as const;
+
 export type Cite = { label: string; href: string };
 
-export type ContextPoint = {
-  /** One-line scan title */
-  headline: string;
-  /** Short supporting bullets */
-  bullets: string[];
-  links: Cite[];
+export type CalloutTone = "ok" | "warn" | "amber" | "neutral";
+
+export type Callout = {
+  tone: CalloutTone;
+  /** Big stressed figure or short label */
+  stat: string;
+  /** One plain-language line under the stat */
+  text: string;
 };
 
 /** Canonical source URLs. Every on-page claim should point at one of these. */
@@ -155,9 +347,21 @@ export const LINKS = {
     label: "Toronto Congestion Management Plan",
     href: "https://www.toronto.ca/services-payments/streets-parking-transportation/traffic-management/congestion-management-plan/",
   },
+  congestionPlan2026: {
+    label: "Congestion Management Plan 2026-2028 (TTI figures)",
+    href: "https://www.toronto.ca/legdocs/mmis/2026/ie/bgrd/backgroundfile-285483.pdf",
+  },
   ksi: {
-    label: "Toronto Open Data · KSI collisions",
+    label: "Toronto open data · serious crashes",
     href: "https://open.toronto.ca/dataset/motor-vehicle-collisions-involving-killed-or-seriously-injured-persons/",
+  },
+  tpsCollisions: {
+    label: "Toronto Police · traffic collisions open data",
+    href: "https://data.torontopolice.on.ca/datasets/TorontoPS::traffic-collisions-open-data",
+  },
+  orsar2024: {
+    label: "Ontario ORSAR · preliminary 2024 stats",
+    href: "https://www.ontario.ca/document/ontario-road-safety-annual-reports-orsar/preliminary-2024-ontario-road-safety-annual-report-selected-statistics",
   },
   bikeCounters: {
     label: "Toronto Open Data · permanent bicycle counters",
@@ -191,25 +395,111 @@ export const LINKS = {
     label: "Ontario newsroom · restoring vehicle lanes",
     href: "https://news.ontario.ca/en/release/1007962/ontario-restoring-vehicle-lanes-on-torontos-busiest-streets",
   },
+  councilIE43: {
+    label: "City Council · IE4.3 (June 2023) · Bloor cycle tracks vote",
+    href: "https://secure.toronto.ca/council/agenda-item.do?item=2023.IE4.3",
+  },
 } as const satisfies Record<string, Cite>;
 
-/** Ontario advice on removal. Short bullets; cites at the bottom. */
+/**
+ * Council IE4.3 (June 14, 2023): package that authorized Bloor St W cycle tracks
+ * Runnymede → Resurrection. Holyday motion tried to strip Bloor out; it lost.
+ * Final adopt passed the whole package.
+ */
+export const COUNCIL_VOTE = {
+  item: "2023.IE4.3",
+  date: "June 14, 2023",
+  summary:
+    "City Council authorized the Bloor Street West cycle tracks (Runnymede to Resurrection) as part of a larger cycling package.",
+  stripBloor: {
+    label: "Holyday motion to delete Bloor from the package",
+    result: "Lost 3–20",
+    yes: ["Vincent Crisanti", "Stephen Holyday", "Michael Thompson"],
+    no: [
+      "Paul Ainslie",
+      "Brad Bradford",
+      "Alejandra Bravo",
+      "Jon Burnside",
+      "Shelley Carroll",
+      "Lily Cheng",
+      "Mike Colle",
+      "Paula Fletcher",
+      "Ausma Malik",
+      "Josh Matlow",
+      "Jennifer McKelvie",
+      "Chris Moise",
+      "Amber Morley",
+      "Jamaal Myers",
+      "Frances Nunziata",
+      "James Pasternak",
+      "Gord Perks",
+      "Anthony Perruzza",
+      "Jaye Robinson",
+      "Dianne Saxe",
+    ],
+    absent: ["Gary Crawford", "Nick Mantas"],
+    yesMeans: "Voted to strip Bloor out",
+    noMeans: "Voted to keep Bloor in",
+  },
+  adopt: {
+    label: "Adopt the item as amended (whole package, including Bloor)",
+    result: "Carried 21–1",
+    yes: [
+      "Paul Ainslie",
+      "Brad Bradford",
+      "Alejandra Bravo",
+      "Jon Burnside",
+      "Shelley Carroll",
+      "Lily Cheng",
+      "Mike Colle",
+      "Paula Fletcher",
+      "Ausma Malik",
+      "Josh Matlow",
+      "Jennifer McKelvie",
+      "Chris Moise",
+      "Amber Morley",
+      "Jamaal Myers",
+      "Frances Nunziata",
+      "James Pasternak",
+      "Gord Perks",
+      "Anthony Perruzza",
+      "Jaye Robinson",
+      "Dianne Saxe",
+      "Michael Thompson",
+    ],
+    no: ["Stephen Holyday"],
+    absent: ["Gary Crawford", "Vincent Crisanti", "Nick Mantas"],
+  },
+  link: "councilIE43" as const,
+} as const;
+
+/**
+ * Ontario's CIMA+ / ministry advice on removing bike lanes.
+ * Page needs the why first: province moved to restore car lanes; these files
+ * are what its own reviewers wrote before that.
+ */
 export const ONTARIO_ADVICE = {
-  headline: "What showed up in Ontario's own record",
-  bullets: [
-    "Internal advice and a CIMA+ review for MTO discussed restoring car lanes",
-    "That advice said congestion relief might be limited or short-lived",
-    "The CIMA+ research review put a possible rise in total collisions above 54% if protected lanes came out",
-    "Prior studies cited there put bike-lane collision reductions around 35% to 50%",
-    "Superior Court (July 2025) recorded that the government had received this advice",
-    "Court of Appeal later allowed the law to stand",
+  headline: "Ontario moved to take the bike lanes out",
+  lede:
+    "After Toronto put them in, the province said it would put car lanes back on busy streets, including this one. Ministry staff and a consultant (CIMA+) wrote advice on what that would do. The crash figures below are from that advice, later reported by CBC.",
+  callouts: [
+    {
+      tone: "amber" as const,
+      stat: "Traffic",
+      text: "The same advice said putting car lanes back might ease congestion only a little, or only for a while",
+    },
   ],
-  links: [LINKS.cbcInternal, LINKS.onsc2025, LINKS.cbcAppeal],
+  /** One line under the crash visual; not a second court timeline. */
+  afterNote:
+    "In 2025, the Superior Court noted the province already had this advice when it moved ahead.",
+  bullets: [] as string[],
+  links: [LINKS.cbcInternal, LINKS.onsc2025, LINKS.ontarioNewsroom],
 } as const;
 
 export const METRIC_SOURCES = {
   ksi: [LINKS.ksi],
-  travel: [LINKS.fall2026],
+  speed: [LINKS.fall2026],
+  travel: [LINKS.fall2026, LINKS.congestionPlan2026],
   cyclists: [LINKS.fall2026, LINKS.bikeCounters],
 } as const;
 
@@ -217,7 +507,7 @@ export const CHART_SOURCES = {
   speed: [LINKS.fall2026],
   cycling: [LINKS.fall2026],
   counter: [LINKS.bikeCounters],
-  travel: [LINKS.fall2026],
+  travel: [LINKS.fall2026, LINKS.congestionPlan2026],
 } as const;
 
 export const META = {
@@ -226,81 +516,19 @@ export const META = {
   phase2: "2024, Aberfoyle to Resurrection",
   beforeYears: "2016 to 2022",
   afterYears: "2024 to 2026",
-  /** Phase 1 interim counts: ~18k daily vehicles, under 1% change. */
-  dailyVehicles: 18000,
   sources: [
     LINKS.fall2026,
-    LINKS.interim2024,
     LINKS.projectPage,
+    LINKS.councilIE43,
     LINKS.congestionPlan,
+    LINKS.congestionPlan2026,
     LINKS.ksi,
+    LINKS.tpsCollisions,
+    LINKS.orsar2024,
     LINKS.bikeCounters,
-    LINKS.pilot2017,
-    LINKS.tcat,
-    LINKS.weBelong,
     LINKS.cbcInternal,
     LINKS.onsc2025,
     LINKS.cbcAppeal,
     LINKS.ontarioNewsroom,
   ],
-  context: [
-    {
-      headline: "End-to-end drive times",
-      bullets: [
-        "About 2 to 5 minutes longer than 2022, depending on time of day",
-        "Roughly 25 to 60 seconds per km",
-      ],
-      links: [LINKS.fall2026],
-    },
-    {
-      headline: "Citywide congestion context",
-      bullets: [
-        "City says 2022 to 2025 rises lined up with the Travel Time Index",
-        "Times on this stretch fell from 2025 to 2026",
-      ],
-      links: [LINKS.fall2026, LINKS.congestionPlan],
-    },
-    {
-      headline: "Car volumes (Phase 1)",
-      bullets: [
-        "About 18,000 trips/day",
-        "Under 1% change after install",
-      ],
-      links: [LINKS.interim2024],
-    },
-    {
-      headline: "Emergency response near Phase 1",
-      bullets: [
-        "Paramedics +42 seconds (citywide +45 seconds)",
-        "Fire 90th-percentile first truck +30 seconds locally vs +2 seconds citywide",
-        "City notes a small sample for fire",
-      ],
-      links: [LINKS.projectPage],
-    },
-    {
-      headline: "Permanent bike counter at Old Mill",
-      bullets: [
-        "May to August average +22% from 2025 to 2026",
-        "Counter went live after Phase 2, so no pre-lane baseline",
-      ],
-      links: [LINKS.bikeCounters],
-    },
-    {
-      headline: "Ontario documents (see earlier step)",
-      bullets: [
-        "Internal advice discussed congestion effects of removal",
-        "CIMA+ research review discussed collision risk",
-      ],
-      links: [LINKS.cbcInternal, LINKS.onsc2025, LINKS.cbcAppeal],
-    },
-    {
-      headline: "Downtown Bloor pilot (different stretch)",
-      bullets: [
-        "Shaw to Avenue, 2016 to 2017",
-        "Cyclists +49%, motor volumes -16%",
-        "TCAT study of nearby businesses: spending and customers up or stable",
-      ],
-      links: [LINKS.pilot2017, LINKS.tcat],
-    },
-  ] satisfies ContextPoint[],
 } as const;

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://bloor-west-bike-lanes.vercel.app/sitemap.xml
